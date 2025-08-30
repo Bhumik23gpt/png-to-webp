@@ -1,49 +1,47 @@
-import { put } from '@vercel/blob';
-import formidable from 'formidable';
-import sharp from 'sharp';
+import { put } from "@vercel/blob";
+import formidable from "formidable";
+import sharp from "sharp";
 
-// Disable Next.js body parser (important for formidable)
 export const config = {
   api: {
-    bodyParser: false,
+    bodyParser: false, // we’ll handle form-data manually
   },
 };
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
-  try {
-    // Parse form-data upload
-    const form = formidable({});
-    const [fields, files] = await form.parse(req);
-    const file = files.file?.[0];
+  const form = formidable({ multiples: false });
 
-    if (!file) {
-      return res.status(400).json({ error: 'No file uploaded' });
+  form.parse(req, async (err, fields, files) => {
+    if (err) {
+      console.error("Formidable error:", err);
+      return res.status(500).json({ error: "Error parsing file" });
     }
 
-    // Convert image -> WebP
-    const webpBuffer = await sharp(file.filepath)
-      .webp({ quality: 80 })
-      .toBuffer();
+    const file = files.file;
+    if (!file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
 
-    // Create unique file name
-    const fileName = `converted-${Date.now()}.webp`;
+    try {
+      // Convert to WebP
+      const buffer = await sharp(file.filepath)
+        .webp({ quality: 80 })
+        .toBuffer();
 
-    // Upload to Vercel Blob
-    const blob = await put(fileName, webpBuffer, {
-      access: 'public',
-    });
+      // Upload to Vercel Blob
+      const filename = `${Date.now()}.webp`;
+      const blob = await put(filename, buffer, {
+        access: "public",
+      });
 
-    // Respond with JSON URL
-    return res.status(200).json({
-      success: true,
-      url: blob.url,
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Conversion failed' });
-  }
+      return res.status(200).json({ url: blob.url });
+    } catch (err) {
+      console.error("Processing error:", err);
+      return res.status(500).json({ error: "Conversion failed" });
+    }
+  });
 }

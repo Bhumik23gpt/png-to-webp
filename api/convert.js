@@ -1,47 +1,37 @@
-import { put } from "@vercel/blob";
-import formidable from "formidable";
-import sharp from "sharp";
+import sharp from 'sharp';
+import fetch from 'node-fetch';
+import { put } from '@vercel/blob';
 
-export const config = {
-  api: {
-    bodyParser: false, // we’ll handle form-data manually
-  },
-};
+const BLOB_TOKEN = process.env.BLOB_READ_WRITE_TOKEN;
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+  if (req.method !== 'POST') {
+    res.status(405).send('Method Not Allowed');
+    return;
   }
 
-  const form = formidable({ multiples: false });
+  try {
+    const { pngUrl, quality = 80 } = req.body;
+    if (!pngUrl) return res.status(400).json({ error: 'pngUrl is required' });
 
-  form.parse(req, async (err, fields, files) => {
-    if (err) {
-      console.error("Formidable error:", err);
-      return res.status(500).json({ error: "Error parsing file" });
-    }
+    // 1️⃣ Download PNG from URL
+    const response = await fetch(pngUrl);
+    if (!response.ok) throw new Error('Failed to fetch PNG');
+    const inputBuffer = await response.arrayBuffer();
 
-    const file = files.file;
-    if (!file) {
-      return res.status(400).json({ error: "No file uploaded" });
-    }
+    // 2️⃣ Convert to WebP
+    const webpBuffer = await sharp(Buffer.from(inputBuffer))
+      .webp({ quality: Math.min(Math.max(parseInt(quality), 1), 100) })
+      .toBuffer();
 
-    try {
-      // Convert to WebP
-      const buffer = await sharp(file.filepath)
-        .webp({ quality: 80 })
-        .toBuffer();
+    // 3️⃣ Upload WebP to Vercel Blob
+    const fileName = pngUrl.split('/').pop().replace(/\.png$/i, '.webp');
+    const { url } = await put(fileName, webpBuffer, { access: 'public', token: BLOB_TOKEN });
 
-      // Upload to Vercel Blob
-      const filename = `${Date.now()}.webp`;
-      const blob = await put(filename, buffer, {
-        access: "public",
-      });
-
-      return res.status(200).json({ url: blob.url });
-    } catch (err) {
-      console.error("Processing error:", err);
-      return res.status(500).json({ error: "Conversion failed" });
-    }
-  });
+    // 4️⃣ Return WebP URL
+    res.status(200).json({ webpUrl: url });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
 }

@@ -1,40 +1,49 @@
-import sharp from "sharp";
-import { put } from "@vercel/blob";
+import { put } from '@vercel/blob';
+import formidable from 'formidable';
+import sharp from 'sharp';
+
+// Disable Next.js body parser (important for formidable)
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    res.status(405).json({ error: "Use POST with PNG file" });
-    return;
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    // Collect incoming PNG buffer
-    const inputBuffer = await new Promise((resolve, reject) => {
-      let data = [];
-      req.on("data", chunk => data.push(chunk));
-      req.on("end", () => resolve(Buffer.concat(data)));
-      req.on("error", err => reject(err));
-    });
+    // Parse form-data upload
+    const form = formidable({});
+    const [fields, files] = await form.parse(req);
+    const file = files.file?.[0];
 
-    // Clamp quality between 1–100
-    const quality = Math.min(Math.max(parseInt(req.query.quality) || 80, 1), 100);
+    if (!file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
 
-    // Convert to WebP
-    const outputBuffer = await sharp(inputBuffer)
-      .webp({ quality })
+    // Convert image -> WebP
+    const webpBuffer = await sharp(file.filepath)
+      .webp({ quality: 80 })
       .toBuffer();
 
-    // Upload to Blob Storage
+    // Create unique file name
     const fileName = `converted-${Date.now()}.webp`;
-    const { url } = await put(fileName, outputBuffer, {
-      access: "public",
-      contentType: "image/webp",
+
+    // Upload to Vercel Blob
+    const blob = await put(fileName, webpBuffer, {
+      access: 'public',
     });
 
-    // Return JSON with public URL
-    res.status(200).json({ fileUrl: url });
-  } catch (error) {
-    console.error("Conversion failed:", error);
-    res.status(500).json({ error: error.message });
+    // Respond with JSON URL
+    return res.status(200).json({
+      success: true,
+      url: blob.url,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Conversion failed' });
   }
 }
